@@ -8,6 +8,9 @@ use crate::util::{getenv_bool_default, getenv_default, getenv_float_default, get
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
+    pub swap_xy: bool,
+    pub invert_x: bool,
+    pub invert_y: bool,
     pub ws_url: String,
     pub brush: String,
     pub color: String,
@@ -66,11 +69,20 @@ pub struct Config {
 impl Config {
     /// Defaults from the environment, exactly as the Go binary reads them.
     pub fn from_env() -> Self {
-        Config {
+        Self::try_from_env().expect("valid tablet model")
+    }
+
+    pub fn try_from_env() -> Result<Self, String> {
+        let model = std::env::var("CODRAWER_TABLET_MODEL").unwrap_or_default();
+        let (input, swap_xy, invert_x, invert_y) = tablet_profile(&model)?;
+        Ok(Config {
+            swap_xy: getenv_bool_default("PEN_SWAP_XY", swap_xy),
+            invert_x: getenv_bool_default("PEN_INVERT_X", invert_x),
+            invert_y: getenv_bool_default("PEN_INVERT_Y", invert_y),
             ws_url: getenv_default("DESKTOP_WS", "ws://127.0.0.1:8000/ws/session1"),
             brush: getenv_default("BRUSH", "pen"),
             color: std::env::var("COLOR").unwrap_or_default(),
-            input_device: std::env::var("INPUT_DEVICE").unwrap_or_default(),
+            input_device: getenv_default("INPUT_DEVICE", input),
             batch_hz: getenv_int_default("BATCH_HZ", 60),
             max_batch_points: getenv_int_default("MAX_BATCH_POINTS", 64),
             no_grab: getenv_bool_default("NO_GRAB", true),
@@ -97,7 +109,16 @@ impl Config {
             ink_socket: getenv_default("INK_SOCKET", "/run/codrawer/ink.sock"),
             native_agent_ink: getenv_bool_default("NATIVE_AGENT_INK", false),
             page_dump: false,
-        }
+        })
+    }
+}
+
+/// Matches native/tablet.go; explicit environment settings and flags override these defaults.
+fn tablet_profile(model: &str) -> Result<(&str, bool, bool, bool), String> {
+    match model {
+        "" | "paper-pro" => Ok(("", false, false, false)),
+        "rm2" => Ok(("/dev/input/event1", true, false, true)),
+        _ => Err(format!("unknown CODRAWER_TABLET_MODEL: {model:?}")),
     }
 }
 
@@ -114,6 +135,9 @@ struct FlagDef {
 }
 
 const FLAGS: &[FlagDef] = &[
+    FlagDef { name: "pen-swap-xy", usage: "Swap normalized pen axes before inversion" },
+    FlagDef { name: "pen-invert-x", usage: "Reverse horizontal page coordinates" },
+    FlagDef { name: "pen-invert-y", usage: "Reverse vertical page coordinates" },
     FlagDef { name: "ws", usage: "WebSocket URL to desktop server" },
     FlagDef { name: "brush", usage: "Brush name for pen strokes (non-eraser)" },
     FlagDef { name: "color", usage: "Optional color hint (e.g. #00ff88). Not available from raw input; set via config." },
@@ -148,6 +172,9 @@ const FLAGS: &[FlagDef] = &[
 
 fn slot<'a>(cfg: &'a mut Config, name: &str) -> Option<Slot<'a>> {
     Some(match name {
+        "pen-swap-xy" => Slot::Bool(&mut cfg.swap_xy),
+        "pen-invert-x" => Slot::Bool(&mut cfg.invert_x),
+        "pen-invert-y" => Slot::Bool(&mut cfg.invert_y),
         "ws" => Slot::Str(&mut cfg.ws_url),
         "brush" => Slot::Str(&mut cfg.brush),
         "color" => Slot::Str(&mut cfg.color),
@@ -339,6 +366,23 @@ mod tests {
         c.ws_url = "ws://x".into();
         c.no_grab = true;
         c
+    }
+
+    #[test]
+    fn tablet_profiles_and_orientation_overrides() {
+        for model in ["", "paper-pro"] {
+            assert_eq!(tablet_profile(model).unwrap(), ("", false, false, false));
+        }
+        assert_eq!(tablet_profile("rm2").unwrap(), ("/dev/input/event1", true, false, true));
+        assert!(tablet_profile("unknown").is_err());
+        let mut c = base();
+        c.swap_xy = true;
+        c.invert_y = true;
+        parse_args(&mut c, &args(&["-pen-swap-xy=false", "-pen-invert-x", "-pen-invert-y=false", "-input=/dev/input/event9"])).unwrap();
+        assert!(!c.swap_xy && c.invert_x && !c.invert_y);
+        assert_eq!(c.input_device, "/dev/input/event9");
+        let pen = crate::bridge::pen_config(&c);
+        assert!(!pen.swap_xy && pen.invert_x && !pen.invert_y);
     }
 
     #[test]

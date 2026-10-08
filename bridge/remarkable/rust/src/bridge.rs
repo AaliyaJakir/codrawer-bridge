@@ -78,6 +78,9 @@ pub fn typed_reply(data: &str) -> Option<String> {
 /// The pen machine's settings from the config.
 pub fn pen_config(cfg: &Config) -> pen::Config {
     pen::Config {
+        swap_xy: cfg.swap_xy,
+        invert_x: cfg.invert_x,
+        invert_y: cfg.invert_y,
         brush: cfg.brush.clone(),
         color: cfg.color.clone(),
         touch_mode: cfg.touch_mode.clone(),

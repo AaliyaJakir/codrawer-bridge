@@ -742,10 +742,10 @@ class Agentd:
             elif not rec.ink:
                 rec.note = "agent ink off: text only"
             return rec
-        except asyncio.CancelledError:
-            # a newer ask for the same selection replaced this one (queue.py); terminal.py has
-            # interrupted the model's turn, and the hand stops after its current stroke
-            rec.error = "canceled (newer ask, layer deletion, or shutdown)"
+        except asyncio.CancelledError as e:
+            # queue.py supplies a reason for replacement; page deletion and shutdown
+            # cancel without one. The model turn is interrupted and the hand stops.
+            rec.error = str(e) or "canceled (layer deletion or shutdown)"
             if stream is not None:
                 stream.stop()
             raise
