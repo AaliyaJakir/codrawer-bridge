@@ -63,6 +63,9 @@ impl Default for Ranges {
 
 #[derive(Debug, Clone, Default)]
 pub struct Config {
+    pub swap_xy: bool,
+    pub invert_x: bool,
+    pub invert_y: bool,
     /// Brush hint for pen strokes ("pen"); the rubber end is "eraser".
     pub brush: String,
     /// Optional color hint.
@@ -269,6 +272,18 @@ impl Machine {
         }
     }
 
+    /// Normalize device axes, then swap and invert into page coordinates.
+    fn coordinates(&self) -> (f64, f64) {
+        let mut x = norm(self.x, self.rng.x_min, self.rng.x_max);
+        let mut y = norm(self.y, self.rng.y_min, self.rng.y_max);
+        if self.cfg.swap_xy {
+            std::mem::swap(&mut x, &mut y);
+        }
+        if self.cfg.invert_x { x = 1.0 - x; }
+        if self.cfg.invert_y { y = 1.0 - y; }
+        (x, y)
+    }
+
     /// Sends the pen's position while it is in range but not touching, paced by `hover_every` and
     /// only when it moved, and one `{"gone":true}` when it leaves range. Cursor messages are
     /// ephemeral: a refused one is simply dropped and never affects stroke delivery.
@@ -291,8 +306,7 @@ impl Machine {
                 return;
             }
         }
-        let x = norm(self.x, self.rng.x_min, self.rng.x_max);
-        let y = norm(self.y, self.rng.y_min, self.rng.y_max);
+        let (x, y) = self.coordinates();
         if self.hovering && (x - self.hover_x).abs() < 0.002 && (y - self.hover_y).abs() < 0.002 {
             return; // still: nothing new to show
         }
@@ -407,8 +421,7 @@ impl Machine {
         if !self.has_x || !self.has_y {
             return;
         }
-        let x = norm(self.x, self.rng.x_min, self.rng.x_max);
-        let y = norm(self.y, self.rng.y_min, self.rng.y_max);
+        let (x, y) = self.coordinates();
         if let Some((lx, ly)) = self.last {
             let (dx, dy) = (x - lx, y - ly);
             if dx * dx + dy * dy < 1e-8 {
@@ -523,6 +536,37 @@ mod tests {
         }
         fn set_refuse(&self, v: bool) {
             *self.refuse.lock().unwrap() = v;
+        }
+    }
+
+    #[test]
+    fn orientation_applies_to_strokes_and_hover() {
+        for swap in [false, true] {
+            for ix in [false, true] {
+                for iy in [false, true] {
+                    let mut r = new_rig();
+                    r.m.cfg.swap_xy = swap;
+                    r.m.cfg.invert_x = ix;
+                    r.m.cfg.invert_y = iy;
+                    // Unequal axis ranges: normalize before swapping.
+                    r.m.rng.y_max = 20000;
+                    let (mut x, mut y) = if swap { (0.2, 0.1) } else { (0.1, 0.2) };
+                    if ix { x = 1.0 - x; }
+                    if iy { y = 1.0 - y; }
+                    r.point(1000, 4000);
+                    let out = r.out();
+                    assert_eq!(out[1]["pts"][0][0], x);
+                    assert_eq!(out[1]["pts"][0][1], y);
+                    r.up();
+                    r.ev(EV_KEY, BTN_TOOL_PEN, 1);
+                    r.advance(40);
+                    r.syn();
+                    let out = r.out();
+                    let cursor = out.iter().rev().find(|m| m["t"] == "cursor" && m.get("x").is_some()).unwrap();
+                    assert_eq!(cursor["x"], x);
+                    assert_eq!(cursor["y"], y);
+                }
+            }
         }
     }
 

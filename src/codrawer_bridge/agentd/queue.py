@@ -31,6 +31,7 @@ Job = Callable[[], Awaitable[Any]]
 
 #: What :meth:`PageQueue.submit` returns when the request replaced an older one with its signature.
 REPLACED = -1
+REPLACED_REASON = "replaced by a newer ask for the same selection"
 
 
 class PageQueue:
@@ -67,7 +68,7 @@ class PageQueue:
             if running is not None and running[0] == sig and not running[1].done():
                 line.insert(0, (sig, job))
                 self._replaced.add(running[1])
-                running[1].cancel()
+                running[1].cancel(REPLACED_REASON)
                 return REPLACED
         if busy:
             if len(line) >= self.max_waiting:

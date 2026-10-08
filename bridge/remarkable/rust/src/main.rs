@@ -12,7 +12,10 @@ fn main() {
         std::process::exit(codrawer_bridge::release::run_release(&args[1..]));
     }
 
-    let defaults = Config::from_env();
+    let defaults = Config::try_from_env().unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
     let mut cfg = defaults.clone();
     match flags::parse_args(&mut cfg, &args) {
         Ok(()) => {}

@@ -305,6 +305,30 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def test_layer_deletion_is_not_logged_as_a_replacement(tmp_path):
+    import json
+
+    async def go():
+        a, sent, asked = _agent_with_fakes(tmp_path, delay=100)
+        a.handle({**TAP, "ts": _now_ms()})
+        for _ in range(100):
+            if asked:
+                break
+            await asyncio.sleep(0.01)
+        assert asked
+        a.queue.cancel_page("d", "p1")
+        for _ in range(100):
+            if (a.state / "requests.jsonl").exists():
+                break
+            await asyncio.sleep(0.01)
+        recs = [json.loads(x) for x in (a.state / "requests.jsonl").read_text().splitlines()]
+        assert [r["error"] for r in recs] == ["canceled (layer deletion or shutdown)"]
+        assert not a._open_status
+        assert not [m for m in sent if m["t"] == "primer" and m["move"]["text"] == "A circled word."]
+
+    asyncio.run(go())
+
+
 def test_a_second_ask_after_the_debounce_replaces_the_first(tmp_path, monkeypatch):
     import json
 
